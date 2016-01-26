@@ -15,6 +15,10 @@ var proxy = proxydocker()
     });
 
 express()
+    .get( '/somewhere', function ( req, res ) {
+        // intercept requests before the proxying to the container
+        res.send( 'Hello world.' );
+    })
     .use( function ( req, res, next ) {
         // set a container name for the request.
         // proxy-docker will use it to proxy the request to the 
@@ -23,5 +27,7 @@ express()
         req.session.container = req.user.name; 
         next()
     })
+
+    // all other requests will be proxied to the container
     .use( proxy.server() );
 ```

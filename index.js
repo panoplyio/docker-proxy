@@ -1,9 +1,13 @@
+var util = require( 'util' );
+var debug = require( 'debug' );
 var extend = require( 'extend' );
 var express = require( 'express' );
 var Docker = require( 'dockerode' );
 var Promise = require( 'bluebird' );
-var debug = require( 'debug' )( 'proxy-docker' );
 var proxy = require( 'http-proxy' ).createProxyServer();
+
+var log = debug( 'proxy-docker' );
+var error = debug( 'proxy-docker:error' );
 
 module.exports = function ( docker ) {
     return new DockerProxy( docker );
@@ -22,14 +26,6 @@ function DockerProxy ( docker ) {
     }
 
     this._autoCreate = false;
-    this._readyfn = function () {
-        return Promise.resolve( true );
-    }
-}
-
-DockerProxy.prototype.ready = function ( readyfn ) {
-    this._readyfn = readyfn;
-    return this;
 }
 
 DockerProxy.prototype.autoCreate = function ( enabled ) {
@@ -57,9 +53,9 @@ DockerProxy.prototype.create = function ( createfn ) {
 DockerProxy.prototype.server = function () {
     return express()
         .use( function ( req, res, next ) {
-            var name = req.session.container;
+            var name = ( req.session || {} ).container;
             if ( !name ) {
-                debug( 'No container name found in session' );
+                log( 'No container name found in session' );
                 next();
                 return;
             }
@@ -69,7 +65,7 @@ DockerProxy.prototype.server = function () {
 
                 // find the container by name
                 .then( function () {
-                    debug( 'Looking up container: %s', name );
+                    log( 'Looking up container: %s', name );
                     return this.findContainer( name )
                 })
 
@@ -78,13 +74,13 @@ DockerProxy.prototype.server = function () {
                     if ( container ) {
                         return container;
                     } else if ( !this._autoCreate ) {
-                        throw new Error( 'No container found: ' + name + ' (autoCreate: false)' );
+                        throw new NoContainerFound( 'No container found: ' + name + ' (autoCreate: false)' );
                     } else if ( !this._createfn ) {
-                        throw new Error( 'No container found: ' + name + ' (missing create function)' );
+                        throw new NoContainerFound( 'No container found: ' + name + ' (missing create function)' );
                     }
 
                     // container doesn't exist, create it.
-                    debug( 'Container not found: %s. Creating...', name );
+                    log( 'Container not found: %s. Creating...', name );
                     return this._createfn( this._docker, name )
                         .return({ Status: '' }) // wasn't started
                 })
@@ -96,7 +92,7 @@ DockerProxy.prototype.server = function () {
                     }
 
                     // not running, start it up...
-                    debug( 'Container not running: %s. Starting...', name );
+                    log( 'Container not running: %s. Starting...', name );
                     return this._docker.getContainerAsync( name )
                         .bind( this )
                         .then( function ( container ) {
@@ -112,7 +108,7 @@ DockerProxy.prototype.server = function () {
                     var port = container.Ports[ 0 ].PublicPort;
                     var target = 'http://127.0.0.1:' + port;
                     var options = { target: target };
-                    debug( 'Proxy to container: %s, at %s', name, target );
+                    log( 'Proxy to container: %s, at %s', name, target );
                     return new Promise( function ( resolve, reject ) {
                         proxy.web( req, res, options, function ( err ) {
                             if ( err ) {
@@ -123,7 +119,7 @@ DockerProxy.prototype.server = function () {
                         })
                     })
                     .catch( ConnectionResetError, function () {
-                        debug( 'Container connection reset or not ready: %s. Initializing...', name );
+                        log( 'Container connection reset or not ready: %s. Initializing...', name );
                         res.send([
                             'Initializing...',
                             '<script>',
@@ -134,9 +130,12 @@ DockerProxy.prototype.server = function () {
                         ].join( '' ) )
                     }) 
                 })
-
+                .catch( NoContainerFound, function () {
+                    log( 'No container found: %s', name );
+                    next();
+                })
                 .catch( function ( err ) {
-                    log( err, err.stack );
+                    error( err, err.stack );
                     res.status( 500 ).send( err.toString() )
                 })
         }.bind( this ) )
@@ -156,9 +155,18 @@ function findContainer ( proxy, name ) {
         })
 }
 
+util.inherits( NoContainerFound, Error );
+function NoContainerFound ( msg ) {
+    this.name = 'NoContainerFound';
+    this.message = msg;
+}
+
+
 function ConnectionResetError ( err ) {
     return err.code === 'ECONNRESET';
 }
+
+
 
 
 
