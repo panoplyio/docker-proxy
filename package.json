@@ -1,6 +1,6 @@
 {
   "name": "proxy-docker",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "Create docker containers and proxy HTTP requests to them",
   "main": "index.js",
   "scripts": {
